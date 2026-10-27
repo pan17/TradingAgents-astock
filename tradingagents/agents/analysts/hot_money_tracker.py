@@ -9,7 +9,6 @@ from tradingagents.agents.utils.agent_utils import (
     get_insider_transactions,
     get_language_instruction,
     get_news,
-    get_northbound_flow,
     get_stock_data,
 )
 from tradingagents.dataflows.config import get_config
@@ -22,12 +21,16 @@ def create_hot_money_tracker(llm):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
 
+        # get_northbound_flow 已从工具列表移除：上游同花顺 hsgtApi 的 sgt(深股通)
+        # 数组长度与 time 时间轴不一致（实测 35 vs 262），末值无法对应收盘时刻，
+        # 与 hgt 相加会得到失真的"北向合计净流入"；且交易所已停止披露北向当日
+        # 净买入额（东财 kamt 的 dayNetAmtIn 恒为 0）。拿不到可信数据时，
+        # 让模型直接不碰这个维度，比让它拿到脏数据后自行判断更安全。
         tools = [
             get_stock_data,
             get_news,
             get_insider_transactions,
             get_hot_stocks,
-            get_northbound_flow,
             get_concept_blocks,
             get_fund_flow,
             get_dragon_tiger_board,
@@ -47,14 +50,12 @@ def create_hot_money_tracker(llm):
             "\n2. 调用 get_insider_transactions 获取股东/内部人交易记录，判断主力动向"
             "\n3. 调用 get_news 搜索游资、龙虎榜、主力资金相关新闻"
             "\n4. 调用 get_hot_stocks 获取当日强势股及题材归因（同花顺编辑部人工标注），识别热点板块轮动"
-            "\n5. 调用 get_northbound_flow 获取北向资金（沪深股通）实时分钟级流向，判断外资态度"
-            "\n6. 综合判断当前资金博弈格局：主力吸筹 / 主力出货 / 游资接力 / 散户主导"
+            "\n5. 综合判断当前资金博弈格局：主力吸筹 / 主力出货 / 游资接力 / 散户主导"
             "\n\n请使用以下工具："
             "\n- `get_stock_data`：获取 K 线和成交量数据"
             "\n- `get_news(ticker, start_date, end_date)`：搜索游资/资金流向相关新闻，ticker 必须使用目标股票的 6 位代码"
             "\n- `get_insider_transactions`：获取股东和内部人交易数据"
             "\n- `get_hot_stocks(curr_date)`：获取当日涨停股 + 题材归因 reason tags（同花顺独家）"
-            "\n- `get_northbound_flow(curr_date)`：获取北向资金实时分钟级流向（沪股通+深股通累计净买入）"
             "\n- `get_concept_blocks(ticker)`：获取个股所属概念板块/行业分类/地域（百度股市通，含当日涨幅）"
             "\n- `get_fund_flow(ticker, curr_date)`：获取个股主力/散户资金流向（分钟级实时+20日历史，超大单/大单/中单/小单净流入）"
             "\n- `get_dragon_tiger_board(ticker, curr_date)`：获取龙虎榜上榜记录、买卖席位明细（营业部）、机构参与情况"
@@ -62,11 +63,10 @@ def create_hot_money_tracker(llm):
             "\n\n撰写详细的资金面分析报告，给出资金面总体判断（主力流入/主力流出/资金博弈/无明显信号）和短期资金面信号研判（仅供研究参考，不构成投资建议）。报告末尾附 Markdown 表格汇总量价信号、资金动向和结论。"
             "\n\n📋 必采清单 — 以下数据点必须出现在报告中，无法获取时标注 [数据缺失: xxx]："
             "\n1. 近 5 日成交量变化趋势（放量/缩量/平稳）"
-            "\n2. 当日北向资金净流入金额（沪股通 + 深股通）"
-            "\n3. 个股主力资金净流入（超大单 + 大单）"
-            "\n4. 所属概念板块及当日板块涨幅"
-            "\n5. 当日是否上榜热门股及题材归因"
-            "\n6. 资金面总体判断"
+            "\n2. 个股主力资金净流入（超大单 + 大单）"
+            "\n3. 所属概念板块及当日板块涨幅"
+            "\n4. 当日是否上榜热门股及题材归因"
+            "\n5. 资金面总体判断"
             + get_language_instruction()
         )
 

@@ -42,15 +42,38 @@ logger = logging.getLogger(__name__)
 # Helpers: ticker format & market detection
 # ---------------------------------------------------------------------------
 
+# 基金/ETF/债券代码段 → 交易所前缀。必须在个股的 6/9→sh、8→bj 规则**之前**判断：
+# 上交所 ETF（510300 沪深300ETF、588000 科创50ETF、511990 货币ETF）都以 5 开头，
+# 而个股规则里 "5" 没有任何分支，会落到最后的 `return "sz"`——于是被当成深市代码
+# 去问新浪，拿到空 payload，`_sina_kline_fallback` 返回空表，上层报
+# 「mootdx和新浪备用源均不可用」。表现为整只 ETF 的技术面完全无数据。
+#
+# 依据交易所代码段分配：
+#   sh: 50/51/52/56/58/59（ETF、LOF）
+#   sz: 15/16/18（ETF、LOF、封闭式）
+_FUND_PREFIX_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("50", "51", "52", "56", "58", "59"), "sh"),
+    (("15", "16", "18"), "sz"),
+)
+
+
 def _get_prefix(code: str) -> str:
-    """6-digit A-stock code -> market prefix for Tencent API.
+    """6-digit A-stock / fund code -> market prefix for Tencent & Sina APIs.
 
     The 92 prefix must be checked before the leading-9 rule: the Beijing Stock
     Exchange started issuing 920xxx codes for new listings in October 2024, and
     a bare ``startswith("9")`` routes them to Shanghai, where the Tencent quote
     endpoint returns an empty payload (issue #85).  Only 900xxx (Shanghai B
     shares) legitimately belongs to ``sh``.
+
+    Fund/ETF codes need their own rule (see ``_FUND_PREFIX_RULES``): a bare
+    ``startswith("6")`` test sends every ``5xxxxx`` Shanghai ETF to Shenzhen,
+    where Sina answers with an empty payload — so ``get_stock_data("510300")``
+    silently lost its HTTP fallback and the market analyst had no OHLCV at all.
     """
+    for starts, prefix in _FUND_PREFIX_RULES:
+        if code.startswith(starts):
+            return prefix
     if code.startswith("92"):
         return "bj"
     if code.startswith(("6", "9")):
@@ -632,7 +655,10 @@ def _sina_kline_fallback(code: str, start_date: str = None, end_date: str = None
 
     Returns DataFrame with columns: Date, Open, High, Low, Close, Volume.
     """
-    prefix = "sh" if code.startswith("6") else "sz"
+    # 走 _get_prefix 而不是内联 `"sh" if code.startswith("6") else "sz"`：那份内联
+    # 判断与 _get_prefix 各写一遍，ETF 前缀修复只改一处时这里会漏（510300 曾被
+    # 判成 sz510300，新浪返回空，回退链静默失效）。
+    prefix = _get_prefix(code)
     url = (
         "http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
         "CN_MarketData.getKLineData"
