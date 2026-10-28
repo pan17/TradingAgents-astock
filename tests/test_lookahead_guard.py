@@ -195,6 +195,25 @@ def test_fund_flow_keeps_realtime_for_today(fake_em):
     assert any("fflow/kline" in u for u in fake_em)
 
 
+def test_fund_flow_uses_shanghai_secid_for_etf_and_handles_null(monkeypatch):
+    """513180 is a Shanghai ETF: Eastmoney requires secid=1.513180.
+
+    With secid=0.513180 Eastmoney returns ``{"data": null}`` (rc=100), which
+    used to crash on ``None.get("klines")`` instead of reporting no data.
+    """
+    seen = []
+
+    def fake_get(url, params=None, timeout=10):
+        seen.append(params or {})
+        return FakeResp({"data": None})
+
+    monkeypatch.setattr(a_stock, "_em_get", fake_get)
+    out = a_stock.get_fund_flow("513180", TODAY)
+
+    assert seen and all(p.get("secid") == "1.513180" for p in seen)
+    assert not out.startswith("Error fetching fund flow")
+
+
 # ---------------------------------------------------------------------------
 # 只有实时快照的两个：补不上就必须明说
 # ---------------------------------------------------------------------------

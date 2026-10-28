@@ -83,6 +83,17 @@ def _get_prefix(code: str) -> str:
     return "sz"
 
 
+def _eastmoney_secid(code: str) -> str:
+    """6-digit A-stock / fund code -> Eastmoney ``secid``.
+
+    Eastmoney uses market id 1 for Shanghai and 0 for Shenzhen/Beijing.  This
+    must go through ``_get_prefix`` rather than a bare ``startswith("6")``:
+    all 5xxxxx Shanghai ETFs would otherwise be sent as ``0.xxx`` and Eastmoney
+    answers ``{"data": null}`` (rc=100) instead of an error.
+    """
+    return f"1.{code}" if _get_prefix(code) == "sh" else f"0.{code}"
+
+
 def _reject_non_a_share(original: str, code: str) -> None:
     """港股/美股代码走到 A 股数据层时当场报错，而不是拿去查 A 股（#43）。
 
@@ -1069,13 +1080,12 @@ def get_fundamentals(
 
         # --- Eastmoney push2: basic stock info (direct HTTP) ---
         try:
-            market_code = 1 if code.startswith("6") else 0
             _info_url = "https://push2.eastmoney.com/api/qt/stock/get"
             _info_params = {
                 "fltt": "2",
                 "invt": "2",
                 "fields": "f57,f58,f84,f85,f127,f116,f117,f189,f43",
-                "secid": f"{market_code}.{code}",
+                "secid": _eastmoney_secid(code),
             }
             r = _em_get(_info_url, params=_info_params, timeout=10)
             d = r.json().get("data", {})
@@ -1233,7 +1243,7 @@ def _get_financial_report_sina(
     }
     source_type = _report_type_map.get(report_type, "lrb")
 
-    prefix = "sh" if code.startswith("6") else "sz"
+    prefix = _get_prefix(code)
     paper_code = f"{prefix}{code}"
     url = "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022"
     params = {
@@ -2208,7 +2218,7 @@ def get_fund_flow(
     with 东财 push2 fund flow API.
     """
     code = _normalize_ticker(ticker)
-    secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
+    secid = _eastmoney_secid(code)
     lines = [
         f"# Fund Flow for {code} (A-stock)",
         f"# Source: 东财 push2 (Eastmoney)",
@@ -2236,7 +2246,7 @@ def get_fund_flow(
         if not historical:
             r = _em_get(url_rt, params=params_rt, timeout=10)
             d = r.json()
-            klines = d.get("data", {}).get("klines", [])
+            klines = (d.get("data") or {}).get("klines", [])
 
         if klines:
             lines.append(
@@ -2295,7 +2305,7 @@ def get_fund_flow(
             }
             rh = _em_get(url_hist, params=params_hist, timeout=10)
             dh = rh.json()
-            hist_klines = dh.get("data", {}).get("klines", [])
+            hist_klines = (dh.get("data") or {}).get("klines", [])
 
             # 逐行按分析日截断：接口返回的是"从今天回溯 20 个交易日"，
             # 在历史日期上直接打印等于把未来的资金流喂给模型（未来函数）。

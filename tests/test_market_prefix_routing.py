@@ -10,7 +10,7 @@ import unittest
 
 import pytest
 
-from tradingagents.dataflows.a_stock import _get_prefix
+from tradingagents.dataflows.a_stock import _eastmoney_secid, _get_prefix
 
 
 @pytest.mark.unit
@@ -39,6 +39,13 @@ class MarketPrefixRoutingTests(unittest.TestCase):
         """900xxx (Shanghai B shares) is the only leading-9 range that really is Shanghai."""
         self.assertEqual(_get_prefix("900901"), "sh")
         self.assertEqual(_get_prefix("900932"), "sh")
+
+    def test_eastmoney_secid_routes_shanghai_etf_to_market_1(self):
+        """5xxxxx is a Shanghai ETF range; Eastmoney market 0 returns data=null."""
+        self.assertEqual(_eastmoney_secid("510300"), "1.510300")
+        self.assertEqual(_eastmoney_secid("513180"), "1.513180")
+        self.assertEqual(_eastmoney_secid("588000"), "1.588000")
+        self.assertEqual(_eastmoney_secid("159530"), "0.159530")
 
 
 if __name__ == "__main__":
